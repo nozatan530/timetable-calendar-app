@@ -69,12 +69,13 @@ export default function Home() {
   const [selectedFY, setSelectedFY] = useState(() => {
     const y = new Date().getFullYear();
     const m = new Date().getMonth() + 1;
-    return m >= 2 ? y + 1 : y;
+    // 4月始まりの年度：4月以降は今年度、3月以前は前年度
+    return m >= 4 ? y : y - 1;
   });
   const [termRanges, setTermRanges] = useState<TermRange[]>(() => {
     const y = new Date().getFullYear();
     const m = new Date().getMonth() + 1;
-    const fy = m >= 2 ? y + 1 : y;
+    const fy = m >= 4 ? y : y - 1;
     return calcTermRanges("3学期制", fy);
   });
   const [loading, setLoading] = useState(false);
@@ -176,7 +177,8 @@ export default function Home() {
   const stepLabels = ["時限マスタ", "時間割", "学期選択・登録"];
   const currentYear = new Date().getFullYear();
   const currentMonth = new Date().getMonth() + 1;
-  const currentFY = currentMonth >= 2 ? currentYear : currentYear - 1;
+  // 4月始まりの年度
+  const currentFY = currentMonth >= 4 ? currentYear : currentYear - 1;
   const years = [currentFY, currentFY + 1, currentFY + 2];
 
   return (
