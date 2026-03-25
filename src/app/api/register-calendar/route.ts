@@ -2,8 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 
 const DAY_MAP: Record<string, number> = { 月: 1, 火: 2, 水: 3, 木: 4, 金: 5 };
-// RRULEで使う曜日コード
 const RRULE_DAY: Record<string, string> = { 月: "MO", 火: "TU", 水: "WE", 木: "TH", 金: "FR" };
+
+// YYYY-MM-DD と HH:MM から Asia/Tokyo のdateTime文字列を作る
+// toISOStringを使わず、文字列として直接組み立てることでタイムゾーンズレを防ぐ
+function toJSTDateTimeString(dateStr: string, timeStr: string): string {
+  // "2026-04-07" + "09:00" → "2026-04-07T09:00:00+09:00"
+  return `${dateStr}T${timeStr}:00+09:00`;
+}
+
+// YYYY-MM-DD文字列の日付を1日ずつ進める
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00+09:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// 曜日番号を返す（日=0, 月=1...）JST基準
+function getDayOfWeek(dateStr: string): number {
+  return new Date(dateStr + "T00:00:00+09:00").getDay();
+}
 
 export async function POST(req: NextRequest) {
   const { timeMaster, timetable, semesterStart, semesterEnd, accessToken } = await req.json();
@@ -34,22 +52,20 @@ export async function POST(req: NextRequest) {
     const targetDayNum = DAY_MAP[lesson.day];
     const rruleDay = RRULE_DAY[lesson.day];
 
-    const [sh, sm] = times.start.split(":").map(Number);
-    const [eh, em] = times.end.split(":").map(Number);
-
-    // 学期開始日から最初の該当曜日を探す
-    let firstDate = new Date(semesterStart);
-    while (firstDate.getDay() !== targetDayNum) {
-      firstDate.setDate(firstDate.getDate() + 1);
+    // 学期開始日から最初の該当曜日を探す（文字列ベースで処理）
+    let firstDateStr = semesterStart;
+    let attempts = 0;
+    while (getDayOfWeek(firstDateStr) !== targetDayNum && attempts < 7) {
+      firstDateStr = addDays(firstDateStr, 1);
+      attempts++;
     }
 
-    // 学期終了日をRRULE用にYYYYMMDD形式に変換
-    const untilDate = semesterEnd.replace(/-/g, "") + "T235959Z";
+    // 日本時間でdateTime文字列を直接組み立て
+    const startDateTime = toJSTDateTimeString(firstDateStr, times.start);
+    const endDateTime = toJSTDateTimeString(firstDateStr, times.end);
 
-    const startDt = new Date(firstDate);
-    startDt.setHours(sh, sm, 0, 0);
-    const endDt = new Date(firstDate);
-    endDt.setHours(eh, em, 0, 0);
+    // RRULE用のUNTIL（UTCで指定）
+    const untilDate = semesterEnd.replace(/-/g, "") + "T145959Z"; // 23:59:59 JST = 14:59:59 UTC
 
     try {
       await calendar.events.insert({
@@ -58,9 +74,8 @@ export async function POST(req: NextRequest) {
           summary: lesson.title,
           location: lesson.location || "",
           colorId: lesson.colorId || undefined,
-          start: { dateTime: startDt.toISOString(), timeZone: "Asia/Tokyo" },
-          end: { dateTime: endDt.toISOString(), timeZone: "Asia/Tokyo" },
-          // 毎週同じ曜日に繰り返し・学期終了日まで
+          start: { dateTime: startDateTime, timeZone: "Asia/Tokyo" },
+          end: { dateTime: endDateTime, timeZone: "Asia/Tokyo" },
           recurrence: [`RRULE:FREQ=WEEKLY;BYDAY=${rruleDay};UNTIL=${untilDate}`],
         },
       });
