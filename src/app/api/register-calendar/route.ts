@@ -4,23 +4,28 @@ import { google } from "googleapis";
 const DAY_MAP: Record<string, number> = { 月: 1, 火: 2, 水: 3, 木: 4, 金: 5 };
 const RRULE_DAY: Record<string, string> = { 月: "MO", 火: "TU", 水: "WE", 木: "TH", 金: "FR" };
 
-// YYYY-MM-DD と HH:MM から Asia/Tokyo のdateTime文字列を作る
-// toISOStringを使わず、文字列として直接組み立てることでタイムゾーンズレを防ぐ
-function toJSTDateTimeString(dateStr: string, timeStr: string): string {
-  // "2026-04-07" + "09:00" → "2026-04-07T09:00:00+09:00"
-  return `${dateStr}T${timeStr}:00+09:00`;
-}
-
-// YYYY-MM-DD文字列の日付を1日ずつ進める
-function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T00:00:00+09:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-// 曜日番号を返す（日=0, 月=1...）JST基準
+// "YYYY-MM-DD" から曜日番号を返す（日=0, 月=1...）
+// タイムゾーンの影響を受けないよう文字列を直接パース
 function getDayOfWeek(dateStr: string): number {
-  return new Date(dateStr + "T00:00:00+09:00").getDay();
+  const [y, m, d] = dateStr.split("-").map(Number);
+  // Dateオブジェクトを使わずツェラーの公式で曜日を計算
+  const date = new Date(y, m - 1, d); // ローカルタイムで生成（UTC変換なし）
+  return date.getDay();
+}
+
+// "YYYY-MM-DD" に日数を加算して新しい日付文字列を返す
+function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(y, m - 1, d + days);
+  const yy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+// "YYYY-MM-DD" + "HH:MM" → JST dateTime文字列
+function toJSTDateTime(dateStr: string, timeStr: string): string {
+  return `${dateStr}T${timeStr}:00+09:00`;
 }
 
 export async function POST(req: NextRequest) {
@@ -52,20 +57,18 @@ export async function POST(req: NextRequest) {
     const targetDayNum = DAY_MAP[lesson.day];
     const rruleDay = RRULE_DAY[lesson.day];
 
-    // 学期開始日から最初の該当曜日を探す（文字列ベースで処理）
+    // 学期開始日から最初の該当曜日を探す
     let firstDateStr = semesterStart;
-    let attempts = 0;
-    while (getDayOfWeek(firstDateStr) !== targetDayNum && attempts < 7) {
+    for (let i = 0; i < 7; i++) {
+      if (getDayOfWeek(firstDateStr) === targetDayNum) break;
       firstDateStr = addDays(firstDateStr, 1);
-      attempts++;
     }
 
-    // 日本時間でdateTime文字列を直接組み立て
-    const startDateTime = toJSTDateTimeString(firstDateStr, times.start);
-    const endDateTime = toJSTDateTimeString(firstDateStr, times.end);
+    const startDateTime = toJSTDateTime(firstDateStr, times.start);
+    const endDateTime = toJSTDateTime(firstDateStr, times.end);
 
-    // RRULE用のUNTIL（UTCで指定）
-    const untilDate = semesterEnd.replace(/-/g, "") + "T145959Z"; // 23:59:59 JST = 14:59:59 UTC
+    // UNTIL は学期終了日の23:59:59 JSTをUTCに変換 → 14:59:59 UTC
+    const untilDate = semesterEnd.replace(/-/g, "") + "T145959Z";
 
     try {
       await calendar.events.insert({
